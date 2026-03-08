@@ -1,0 +1,16 @@
+{
+  "name": "checkout-champ-proxy",
+  "version": "1.0.0",
+  "description": "Proxy server for Checkout Champ API - provides static IP for IP whitelisting",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
