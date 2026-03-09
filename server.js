@@ -5,7 +5,7 @@
  * Deploy on Render/VPS with a fixed IP and whitelist that IP in Checkout Champ.
  */
 
-require('dotenv').config();
+require('dotenv').config({ path: '.env.local' });
 
 const express = require('express');
 const swaggerUi = require('swagger-ui-express');
@@ -33,8 +33,19 @@ const swaggerDocument = {
     title: 'Checkout Champ Proxy',
     version: '1.0.0',
     description:
-      'Proxy for Checkout Champ API. Use POST /proxy with { endpoint, params } to forward requests using whitelisted IPs.',
+      'Proxy for Checkout Champ API. Use POST /proxy with { endpoint, params } to forward requests. Click **Authorize** and enter your PROXY_SECRET from .env.local.',
   },
+  components: {
+    securitySchemes: {
+      bearerAuth: {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'secret',
+        description: 'Enter your PROXY_SECRET from .env.local (no "Bearer " prefix)',
+      },
+    },
+  },
+  security: [{ bearerAuth: [] }],
   paths: {
     '/proxy': {
       post: {
@@ -48,8 +59,8 @@ const swaggerDocument = {
                 properties: {
                   endpoint: {
                     type: 'string',
-                    description: 'Checkout Champ API path (e.g. /customers/query/ or /clubs/query/)',
-                    example: '/customers/query/',
+                    description: 'Checkout Champ API path (e.g. /customer/query/ or /clubs/query/)',
+                    example: '/customer/query/',
                   },
                   params: {
                     type: 'object',
@@ -89,6 +100,13 @@ app.get('/health', (req, res) => {
 app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
 // Auth middleware: only allow authorized callers to hit /proxy and other protected routes
+app.use((req, res, next) => {
+  const auth = req.headers.authorization;
+  if (!auth || auth !== `Bearer ${PROXY_SECRET}`) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+});
 
 /**
  * POST /proxy
