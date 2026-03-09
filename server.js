@@ -5,7 +5,7 @@
  * Deploy on Render/VPS with a fixed IP and whitelist that IP in Checkout Champ.
  */
 
-require('dotenv').config({ path: '.env.local' });
+require('dotenv').config();
 
 const express = require('express');
 const swaggerUi = require('swagger-ui-express');
