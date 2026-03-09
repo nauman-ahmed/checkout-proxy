@@ -16,13 +16,12 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
 const CHECKOUT_CHAMP_BASE = 'https://api.checkoutchamp.com';
-const PROXY_SECRET = process.env.PROXY_SECRET;
 const CHECKOUT_LOGIN = process.env.CHECKOUT_CHAMP_LOGIN_ID;
 const CHECKOUT_PASSWORD = process.env.CHECKOUT_CHAMP_PASSWORD;
 
 // Validate required env vars
-if (!PROXY_SECRET || !CHECKOUT_LOGIN || !CHECKOUT_PASSWORD) {
-  console.error('Missing required env vars: PROXY_SECRET, CHECKOUT_CHAMP_LOGIN_ID, CHECKOUT_CHAMP_PASSWORD');
+if (!CHECKOUT_LOGIN || !CHECKOUT_PASSWORD) {
+  console.error('Missing required env vars: CHECKOUT_CHAMP_LOGIN_ID, CHECKOUT_CHAMP_PASSWORD');
   process.exit(1);
 }
 
@@ -33,19 +32,8 @@ const swaggerDocument = {
     title: 'Checkout Champ Proxy',
     version: '1.0.0',
     description:
-      'Proxy for Checkout Champ API. Use POST /proxy with { endpoint, params } to forward requests. Click **Authorize** and enter your PROXY_SECRET from .env.local.',
+      'Proxy for Checkout Champ API. Use POST /proxy with { endpoint, params } to forward requests.',
   },
-  components: {
-    securitySchemes: {
-      bearerAuth: {
-        type: 'http',
-        scheme: 'bearer',
-        bearerFormat: 'secret',
-        description: 'Enter your PROXY_SECRET from .env.local (no "Bearer " prefix)',
-      },
-    },
-  },
-  security: [{ bearerAuth: [] }],
   paths: {
     '/proxy': {
       post: {
@@ -84,7 +72,7 @@ const swaggerDocument = {
             description: 'Checkout Champ response wrapped by the proxy',
           },
           401: {
-            description: 'Missing or invalid Authorization header for the proxy',
+            description: 'Bad request',
           },
         },
       },
@@ -98,15 +86,6 @@ app.get('/health', (req, res) => {
 });
 
 app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
-
-// Auth middleware: only allow authorized callers to hit /proxy and other protected routes
-// app.use((req, res, next) => {
-//   const auth = req.headers.authorization;
-//   if (!auth || auth !== `Bearer ${PROXY_SECRET}`) {
-//     return res.status(401).json({ error: 'Unauthorized' });
-//   }
-//   next();
-// });
 
 /**
  * POST /proxy
