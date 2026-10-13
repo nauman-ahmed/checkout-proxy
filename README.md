@@ -4,12 +4,12 @@ Proxy server for Checkout Champ API. Deploy on Render (or VPS) to get a fixed ou
 
 ## Local Setup
 
-1. Copy env file:
+1. Copy env file (it is git-ignored; never commit it):
    ```bash
-   cp .env.example .env
+   cp .env.example .env.local
    ```
 
-2. Fill in `.env`:
+2. Fill in `.env.local`:
    - `PROXY_SECRET` – Generate with: `openssl rand -hex 32`
    - `CHECKOUT_CHAMP_LOGIN_ID` – API username from Checkout Champ
    - `CHECKOUT_CHAMP_PASSWORD` – API password from Checkout Champ
@@ -24,8 +24,8 @@ Proxy server for Checkout Champ API. Deploy on Render (or VPS) to get a fixed ou
    ```bash
    curl -X POST http://localhost:3001/proxy \
      -H "Content-Type: application/json" \
-     -H "Authorization: Bearer YOUR_PROXY_SECRET" \
-     -d '{"endpoint":"/customers/query/","params":{"emailAddress":"test@example.com","exactEmailMatch":"1","startDate":"01/01/2023","endDate":"12/31/2025"}}'
+     -H "x-proxy-secret: YOUR_PROXY_SECRET" \
+     -d '{"endpoint":"/customer/query/","params":{"emailAddress":"test@example.com","exactEmailMatch":"1","startDate":"01/01/2023","endDate":"12/31/2026"}}'
    ```
 
 ---
@@ -85,3 +85,9 @@ PROXY_SECRET=<same value as proxy's PROXY_SECRET>
 ```
 
 Then call the proxy from your API routes instead of Checkout Champ directly.
+
+## Security
+
+- Every `/proxy` request must send `x-proxy-secret: <PROXY_SECRET>` (or `Authorization: Bearer <PROXY_SECRET>`). Only call it from server code, never from a browser.
+- Only these endpoints are forwarded: `/customer/query/`, `/members/query/`, `/members/login/`, `/order/query/`, `/order/import/`. Add to `ALLOWED_ENDPOINTS` in `server.js` if LifeTrove needs another.
+- CORS is disabled: browsers cannot call the proxy.

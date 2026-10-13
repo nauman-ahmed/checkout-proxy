@@ -1,128 +1,116 @@
 /**
  * Checkout Champ API Proxy
  *
- * Forwards requests from LifeTrove (Next.js) to Checkout Champ API.
+ * Forwards requests from the LifeTrove server (Next.js API routes) to Checkout Champ API.
  * Deploy on Render/VPS with a fixed IP and whitelist that IP in Checkout Champ.
+ *
+ * Server-to-server only: every /proxy request must carry PROXY_SECRET, and only
+ * the Checkout Champ endpoints LifeTrove uses are forwarded.
  */
 
 require('dotenv').config({ path: '.env.local' });
 
+const crypto = require('crypto');
 const express = require('express');
-const cors = require('cors');
-const swaggerUi = require('swagger-ui-express');
 
 const app = express();
 
-app.use(cors());
-app.use(express.json());
+app.disable('x-powered-by');
+app.use(express.json({ limit: '20kb' }));
 
 const PORT = process.env.PORT || 3001;
 const CHECKOUT_CHAMP_BASE = 'https://api.checkoutchamp.com';
 const CHECKOUT_LOGIN = process.env.CHECKOUT_CHAMP_LOGIN_ID;
 const CHECKOUT_PASSWORD = process.env.CHECKOUT_CHAMP_PASSWORD;
+const PROXY_SECRET = process.env.PROXY_SECRET;
 
 // Validate required env vars
-if (!CHECKOUT_LOGIN || !CHECKOUT_PASSWORD) {
-  console.error('Missing required env vars: CHECKOUT_CHAMP_LOGIN_ID, CHECKOUT_CHAMP_PASSWORD');
+if (!CHECKOUT_LOGIN || !CHECKOUT_PASSWORD || !PROXY_SECRET) {
+  console.error('Missing required env vars: CHECKOUT_CHAMP_LOGIN_ID, CHECKOUT_CHAMP_PASSWORD, PROXY_SECRET');
   process.exit(1);
 }
 
-// Minimal OpenAPI spec for the proxy, used by Swagger UI at /docs
-const swaggerDocument = {
-  openapi: '3.0.0',
-  info: {
-    title: 'Checkout Champ Proxy',
-    version: '1.0.0',
-    description:
-      'Proxy for Checkout Champ API. Use POST /proxy with { endpoint, params } to forward requests.',
-  },
-  paths: {
-    '/proxy': {
-      post: {
-        summary: 'Forward a request to Checkout Champ via proxy',
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                properties: {
-                  endpoint: {
-                    type: 'string',
-                    description: 'Checkout Champ API path (e.g. /customer/query/ or /clubs/query/)',
-                    example: '/customer/query/',
-                  },
-                  params: {
-                    type: 'object',
-                    description: 'Querystring params forwarded to Checkout Champ',
-                    example: {
-                      emailAddress: 'customer@example.com',
-                      exactEmailMatch: '1',
-                      startDate: '01/01/2020',
-                      endDate: '12/31/2025',
-                      resultsPerPage: '25',
-                    },
-                  },
-                },
-                required: ['endpoint'],
-              },
-            },
-          },
-        },
-        responses: {
-          200: {
-            description: 'Checkout Champ response wrapped by the proxy',
-          },
-          401: {
-            description: 'Bad request',
-          },
-        },
-      },
-    },
-  },
-};
+// Checkout Champ endpoints LifeTrove calls. Anything else is rejected.
+const ALLOWED_ENDPOINTS = new Set([
+  '/customer/query/',
+  '/members/query/',
+  '/members/login/',
+  '/order/query/',
+  '/order/import/',
+]);
 
-// Public routes (no proxy auth)
+// Params the caller may not override.
+const RESERVED_PARAMS = new Set(['loginId', 'password']);
+
+function secretMatches(provided) {
+  if (typeof provided !== 'string' || !provided) return false;
+  const a = crypto.createHash('sha256').update(provided).digest();
+  const b = crypto.createHash('sha256').update(PROXY_SECRET).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
+function requireProxySecret(req, res, next) {
+  const header = req.get('x-proxy-secret');
+  const auth = req.get('authorization');
+  const bearer = auth && auth.startsWith('Bearer ') ? auth.slice(7) : null;
+
+  if (secretMatches(header) || secretMatches(bearer)) {
+    return next();
+  }
+  return res.status(401).json({ result: 'ERROR', message: 'Unauthorized' });
+}
+
+// Public route (no proxy auth)
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'checkout-champ-proxy' });
 });
 
-app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
-
 /**
  * POST /proxy
+ * Headers: x-proxy-secret: <PROXY_SECRET>
  * Body: { endpoint: string, params: object }
  * Forwards to https://api.checkoutchamp.com{endpoint}?loginId=...&password=...&params...
  */
-app.post('/proxy', async (req, res) => {
+app.post('/proxy', requireProxySecret, async (req, res) => {
   try {
-    const { endpoint, params = {} } = req.body;
+    const { endpoint, params = {} } = req.body || {};
 
-    if (!endpoint || typeof endpoint !== 'string') {
-      return res.status(400).json({ error: 'endpoint (string) required in body' });
+    if (typeof endpoint !== 'string' || !ALLOWED_ENDPOINTS.has(endpoint)) {
+      return res.status(400).json({ result: 'ERROR', message: 'Endpoint not allowed' });
     }
 
-    const url = new URL(endpoint.startsWith('/') ? endpoint : `/${endpoint}`, CHECKOUT_CHAMP_BASE);
-    const searchParams = new URLSearchParams({
-      loginId: CHECKOUT_LOGIN,
-      password: CHECKOUT_PASSWORD,
-      ...params,
-    });
-    url.search = searchParams.toString();
+    if (!params || typeof params !== 'object' || Array.isArray(params)) {
+      return res.status(400).json({ result: 'ERROR', message: 'params must be an object' });
+    }
 
-    const response = await fetch(url.toString());
+    const searchParams = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (RESERVED_PARAMS.has(key)) continue;
+      if (value === undefined || value === null) continue;
+      if (typeof value === 'object') {
+        return res.status(400).json({ result: 'ERROR', message: `Invalid value for ${key}` });
+      }
+      searchParams.set(key, String(value));
+    }
+    searchParams.set('loginId', CHECKOUT_LOGIN);
+    searchParams.set('password', CHECKOUT_PASSWORD);
+
+    // endpoint is an exact allow-listed path, so the host is always Checkout Champ.
+    const url = `${CHECKOUT_CHAMP_BASE}${endpoint}?${searchParams.toString()}`;
+
+    const response = await fetch(url, { signal: AbortSignal.timeout(20000) });
     const text = await response.text();
     let data;
     try {
       data = JSON.parse(text);
     } catch {
-      data = { raw: text };
+      data = { result: 'ERROR', message: 'Unexpected response from Checkout Champ' };
     }
 
     res.status(response.status).json(data);
   } catch (err) {
-    console.error('Proxy error:', err);
-    res.status(500).json({ error: err.message });
+    console.error('Proxy error:', err.message);
+    res.status(502).json({ result: 'ERROR', message: 'Could not reach Checkout Champ' });
   }
 });
 
